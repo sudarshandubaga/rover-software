@@ -1,5 +1,5 @@
 ---
 deployment:
   tasks:
-    - export DEPLOY_PATH=/home3/roverf58/public_html
+    - export DEPLOY_PATH=/home1/rudrarmq/tour.xpertcoders.in
     - /bin/cp -R * $DEPLOY_PATH
