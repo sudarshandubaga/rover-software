@@ -10,6 +10,8 @@ class Client extends Model
     use HasFactory;
 
     protected $fillable = [
+        'user_id',
+        'branch_id',
         'name',
         'phone',
         'email',
@@ -18,6 +20,16 @@ class Client extends Model
         'gst_number',
         'department',
     ];
+
+    public function user()
+    {
+        return $this->belongsTo(User::class);
+    }
+
+    public function branch()
+    {
+        return $this->belongsTo(Branch::class);
+    }
 
     public function bookings()
     {

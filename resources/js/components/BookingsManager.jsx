@@ -3,19 +3,22 @@ import axios from 'axios';
 import { 
     Plus, Edit2, Trash2, Search, X, User, Car, Calendar, MapPin, 
     Printer, IndianRupee, FileText, CheckCircle, Clock, AlertTriangle, 
-    ChevronRight, ArrowRight, ShieldCheck, Map, UserCheck, PlusCircle
+    ChevronRight, ArrowRight, ShieldCheck, Map, UserCheck, PlusCircle,
+    Link2, ExternalLink, MessageSquare, Check, Loader2
 } from 'lucide-react';
 
-export default function BookingsManager({ prefillLead = null, onConsumePrefill = null }) {
+export default function BookingsManager({ currentUser = null, prefillLead = null, prefillQuotation = null, onConsumePrefill = null }) {
     const [bookings, setBookings] = useState([]);
     const [clients, setClients] = useState([]);
     const [drivers, setDrivers] = useState([]);
     const [vehicles, setVehicles] = useState([]);
     const [bookingTypes, setBookingTypes] = useState([]);
     const [firms, setFirms] = useState([]);
+    const [branches, setBranches] = useState([]);
 
     const [search, setSearch] = useState('');
     const [statusFilter, setStatusFilter] = useState('All');
+    const [branchFilter, setBranchFilter] = useState('All');
     
     // Modals
     const [bookingModalOpen, setBookingModalOpen] = useState(false);
@@ -23,8 +26,11 @@ export default function BookingsManager({ prefillLead = null, onConsumePrefill =
     const [invoiceViewOpen, setInvoiceViewOpen] = useState(false);
     const [receiptModalOpen, setReceiptModalOpen] = useState(false);
 
-    // Active records
+    // Active records & SMS state
     const [selectedBooking, setSelectedBooking] = useState(null);
+    const [copiedBookingId, setCopiedBookingId] = useState(null);
+    const [smsSendingState, setSmsSendingState] = useState({ id: null, type: null });
+    const [smsToast, setSmsToast] = useState(null);
 
     // Booking form
     const [bookingForm, setBookingForm] = useState({
@@ -86,17 +92,27 @@ export default function BookingsManager({ prefillLead = null, onConsumePrefill =
         fetchVehicles();
         fetchBookingTypes();
         fetchFirms();
+        axios.get('/api/branches').then(res => setBranches(res.data)).catch(() => {});
     }, []);
 
     // Open the booking modal with a client pre-filled from the handed-off lead
     useEffect(() => {
         if (prefillLead) {
+            const clientPhone = prefillLead.phone ? String(prefillLead.phone).trim() : '';
+            const clientName = prefillLead.client_name ? String(prefillLead.client_name).trim() : '';
+            const matchedClient = clients.find(c =>
+                (clientPhone && c.phone && String(c.phone).trim() === clientPhone) ||
+                (clientName && c.name && c.name.toLowerCase() === clientName.toLowerCase())
+            );
+
             setBookingForm(prev => ({
                 ...prev,
-                create_new_client: true,
-                new_client_name: prefillLead.client_name || '',
-                new_client_phone: prefillLead.phone || '',
-                new_client_email: prefillLead.email || '',
+                id: '',
+                client_id: matchedClient ? matchedClient.id : '',
+                create_new_client: !matchedClient,
+                new_client_name: matchedClient ? '' : (prefillLead.client_name || ''),
+                new_client_phone: matchedClient ? '' : (prefillLead.phone || ''),
+                new_client_email: matchedClient ? '' : (prefillLead.email || ''),
                 remarks: prefillLead.requirements
                     ? `Lead requirements: ${prefillLead.requirements}`
                     : prev.remarks,
@@ -106,6 +122,56 @@ export default function BookingsManager({ prefillLead = null, onConsumePrefill =
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [prefillLead]);
+
+    // Open the booking modal with details pre-filled from the handed-off quotation
+    useEffect(() => {
+        if (prefillQuotation) {
+            const quote = prefillQuotation;
+            const lead = quote.lead || {};
+            const clientPhone = lead.phone ? String(lead.phone).trim() : '';
+            const clientName = lead.client_name ? String(lead.client_name).trim() : '';
+
+            const matchedClient = clients.find(c =>
+                (clientPhone && c.phone && String(c.phone).trim() === clientPhone) ||
+                (clientName && c.name && c.name.toLowerCase() === clientName.toLowerCase())
+            );
+
+            const detailsSummary = Array.isArray(quote.details) && quote.details.length > 0
+                ? quote.details
+                    .filter(d => d.description)
+                    .map(d => `${d.description}${d.qty > 1 ? ` (x${d.qty})` : ''}${d.amount ? ` @ ₹${d.amount}` : ''}`)
+                    .join(', ')
+                : '';
+
+            const remarksParts = [
+                `Quotation #${quote.quotation_number}`,
+                quote.total_amount ? `Total: ₹${Number(quote.total_amount).toLocaleString('en-IN')}` : null,
+                detailsSummary ? `Items: ${detailsSummary}` : null,
+                lead.requirements ? `Lead req: ${lead.requirements}` : null
+            ].filter(Boolean).join(' | ');
+
+            const quoteDateTime = quote.date
+                ? `${quote.date}T09:00`
+                : new Date().toISOString().slice(0, 16);
+
+            setBookingForm(prev => ({
+                ...prev,
+                id: '',
+                booking_type_id: prev.booking_type_id || bookingTypes[0]?.id || '',
+                firm_id: prev.firm_id || firms[0]?.id || '',
+                client_id: matchedClient ? matchedClient.id : '',
+                create_new_client: !matchedClient,
+                new_client_name: matchedClient ? '' : (lead.client_name || ''),
+                new_client_phone: matchedClient ? '' : (lead.phone || ''),
+                new_client_email: matchedClient ? '' : (lead.email || ''),
+                from_date_time: quoteDateTime,
+                remarks: remarksParts || prev.remarks,
+            }));
+            setBookingModalOpen(true);
+            if (onConsumePrefill) onConsumePrefill();
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [prefillQuotation]);
 
     const fetchBookings = async () => {
         try {
@@ -330,6 +396,34 @@ export default function BookingsManager({ prefillLead = null, onConsumePrefill =
     };
 
     // ==========================================
+    // PUBLIC LINK & SMS DISPATCH
+    // ==========================================
+    const handleCopyBookingLink = (booking) => {
+        const url = booking.public_url || `${window.location.origin}/b/${booking.public_token}`;
+        navigator.clipboard.writeText(url);
+        setCopiedBookingId(booking.id);
+        setTimeout(() => setCopiedBookingId(null), 2500);
+    };
+
+    const handleSendBookingSms = async (booking, type = 'confirmation') => {
+        setSmsSendingState({ id: booking.id, type });
+        try {
+            const res = await axios.post(`/api/bookings/${booking.id}/send-sms`, { type });
+            if (res.data?.success) {
+                const label = type === 'driver_allocated' ? 'Driver Allocation' : (type === 'completed' ? 'Booking Complete' : 'Booking Confirmation');
+                setSmsToast({ type: 'success', text: `${label} SMS sent to ${res.data.recipient}!` });
+            } else {
+                setSmsToast({ type: 'error', text: res.data?.error || 'Failed to dispatch SMS' });
+            }
+        } catch (err) {
+            setSmsToast({ type: 'error', text: err.response?.data?.message || 'Error sending SMS' });
+        } finally {
+            setSmsSendingState({ id: null, type: null });
+            setTimeout(() => setSmsToast(null), 4500);
+        }
+    };
+
+    // ==========================================
     // INVOICE CALCULATOR
     // ==========================================
     const calculateBilling = (booking) => {
@@ -395,13 +489,16 @@ export default function BookingsManager({ prefillLead = null, onConsumePrefill =
 
     // Filter
     const filteredBookings = bookings.filter(b => {
-        const matchesSearch = b.client.name.toLowerCase().includes(search.toLowerCase()) || 
+        const clientName = b.client?.name || '';
+        const matchesSearch = clientName.toLowerCase().includes(search.toLowerCase()) || 
             b.from_place.toLowerCase().includes(search.toLowerCase()) ||
             b.to_place.toLowerCase().includes(search.toLowerCase()) ||
             (b.invoice_number && b.invoice_number.toLowerCase().includes(search.toLowerCase()));
 
         const matchesStatus = statusFilter === 'All' || b.status === statusFilter;
-        return matchesSearch && matchesStatus;
+        const matchesBranch = branchFilter === 'All' || (b.branch_id && String(b.branch_id) === String(branchFilter));
+
+        return matchesSearch && matchesStatus && matchesBranch;
     });
 
     return (
@@ -413,11 +510,39 @@ export default function BookingsManager({ prefillLead = null, onConsumePrefill =
                 </div>
                 <button
                     onClick={() => handleOpenBookingModal()}
-                    className="flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-4 py-2.5 rounded-lg shadow-sm transition-all text-sm w-full sm:w-auto"
+                    className="flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-4 py-2.5 rounded-lg shadow-sm transition-all text-sm w-full sm:w-auto cursor-pointer"
                 >
                     <Plus size={18} /> New Booking Receipt
                 </button>
             </div>
+
+            {/* Manager scope reminder */}
+            {currentUser?.role === 'manager' && (
+                <div className="bg-indigo-50 border border-indigo-200/80 rounded-2xl p-4 text-xs text-indigo-900 flex items-center justify-between shadow-xs">
+                    <div>
+                        <span className="font-bold">Manager Mode:</span> Showing bookings managed by you for{' '}
+                        <span className="font-bold underline">{currentUser?.branch?.name || 'your assigned branch'}</span>.
+                    </div>
+                    {currentUser?.branch?.code && (
+                        <span className="font-mono font-bold bg-white text-indigo-700 px-2.5 py-1 rounded-lg border border-indigo-200 shadow-2xs">
+                            {currentUser.branch.code}
+                        </span>
+                    )}
+                </div>
+            )}
+
+            {smsToast && (
+                <div className={`p-4 rounded-xl text-sm font-semibold flex items-center justify-between shadow-sm border ${
+                    smsToast.type === 'success' 
+                        ? 'bg-emerald-50 text-emerald-800 border-emerald-200' 
+                        : 'bg-rose-50 text-rose-800 border-rose-200'
+                }`}>
+                    <span>{smsToast.text}</span>
+                    <button onClick={() => setSmsToast(null)} className="text-xs uppercase tracking-wider font-bold opacity-75 hover:opacity-100">
+                        Dismiss
+                    </button>
+                </div>
+            )}
 
             {/* Filter and Search */}
             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -432,13 +557,28 @@ export default function BookingsManager({ prefillLead = null, onConsumePrefill =
                     />
                 </div>
 
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
+                    {currentUser?.role === 'super_admin' && branches.length > 0 && (
+                        <select
+                            value={branchFilter}
+                            onChange={(e) => setBranchFilter(e.target.value)}
+                            className="bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-lg outline-none text-slate-700 font-semibold"
+                        >
+                            <option value="All">All Branches</option>
+                            {branches.map(br => (
+                                <option key={br.id} value={br.id}>
+                                    {br.name} ({br.code})
+                                </option>
+                            ))}
+                        </select>
+                    )}
+
                     <select
                         value={statusFilter}
                         onChange={(e) => setStatusFilter(e.target.value)}
                         className="bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-lg outline-none text-slate-600"
                     >
-                        <option value="All">All Bookings</option>
+                        <option value="All">All Statuses</option>
                         <option value="Pending">Pending Allocations</option>
                         <option value="Active">Active Journeys</option>
                         <option value="Completed">Completed / Billed</option>
@@ -467,6 +607,22 @@ export default function BookingsManager({ prefillLead = null, onConsumePrefill =
                                             </span>
                                             <h4 className="font-bold text-slate-800 text-sm leading-snug">{b.client?.name}</h4>
                                             {b.department && <p className="text-[10px] text-slate-400">Dept: {b.department}</p>}
+
+                                            {/* Creator Manager & Branch Info */}
+                                            {(b.user || b.branch) && (
+                                                <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                                                    {b.branch && (
+                                                        <span className="text-[9px] font-bold bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded border border-indigo-200 font-mono">
+                                                            {b.branch.code}
+                                                        </span>
+                                                    )}
+                                                    {b.user && (
+                                                        <span className="text-[10px] text-slate-500 font-medium">
+                                                            by {b.user.name}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            )}
                                         </div>
                                         <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${
                                             b.status === 'Completed' ? 'bg-emerald-50 text-emerald-700' :
@@ -539,7 +695,41 @@ export default function BookingsManager({ prefillLead = null, onConsumePrefill =
                                             <FileText size={12} /> Bill Details
                                         </button>
                                     </div>
-                                    <div className="flex gap-1">
+                                    <div className="flex gap-1 items-center">
+                                        {/* Copy Customer Public URL */}
+                                        <button
+                                            onClick={() => handleCopyBookingLink(b)}
+                                            className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded transition-colors"
+                                            title={copiedBookingId === b.id ? "Link Copied!" : "Copy Customer Public Pass URL"}
+                                        >
+                                            {copiedBookingId === b.id ? <Check size={14} className="text-emerald-600" /> : <Link2 size={14} />}
+                                        </button>
+
+                                        {/* Open Public Live Page */}
+                                        <a
+                                            href={b.public_url || `/b/${b.public_token}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
+                                            title="Open Public Customer Pass View"
+                                        >
+                                            <ExternalLink size={14} />
+                                        </a>
+
+                                        {/* Send SMS to Customer */}
+                                        <button
+                                            onClick={() => handleSendBookingSms(b, b.status === 'Completed' ? 'completed' : (b.driver_id ? 'driver_allocated' : 'confirmation'))}
+                                            disabled={smsSendingState.id === b.id}
+                                            className="p-1.5 text-slate-400 hover:text-sky-600 hover:bg-sky-50 rounded transition-colors disabled:opacity-50"
+                                            title={`Send SMS to Customer (${b.status === 'Completed' ? 'Trip Complete' : (b.driver_id ? 'Driver & Vehicle Allocated' : 'Booking Confirmation')})`}
+                                        >
+                                            {smsSendingState.id === b.id ? (
+                                                <Loader2 size={14} className="animate-spin text-sky-600" />
+                                            ) : (
+                                                <MessageSquare size={14} />
+                                            )}
+                                        </button>
+
                                         <button 
                                             onClick={() => handleOpenBookingModal(b)}
                                             className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-100/50 rounded"
@@ -1001,6 +1191,46 @@ export default function BookingsManager({ prefillLead = null, onConsumePrefill =
                                     className="p-1.5 border border-slate-200 text-slate-500 rounded-lg hover:bg-slate-100"
                                 >
                                     <X size={15} />
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Customer Public Link & SMS Bar */}
+                        <div className="bg-indigo-50/70 border-b border-indigo-100 p-3 flex flex-wrap items-center justify-between gap-3 no-print">
+                            <div className="flex items-center gap-2">
+                                <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-900 bg-white px-2 py-0.5 rounded border border-indigo-200">
+                                    Customer Public Link
+                                </span>
+                                <span className="font-mono text-xs text-indigo-700 truncate max-w-xs sm:max-w-md">
+                                    {selectedBooking.public_url || `${window.location.origin}/b/${selectedBooking.public_token}`}
+                                </span>
+                            </div>
+
+                            <div className="flex items-center gap-2 flex-wrap">
+                                <button
+                                    onClick={() => handleCopyBookingLink(selectedBooking)}
+                                    className="px-3 py-1.5 bg-white hover:bg-slate-50 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-2xs"
+                                >
+                                    {copiedBookingId === selectedBooking.id ? <Check size={14} className="text-emerald-600" /> : <Link2 size={14} />}
+                                    {copiedBookingId === selectedBooking.id ? 'Copied URL!' : 'Copy Link'}
+                                </button>
+
+                                <a
+                                    href={selectedBooking.public_url || `/b/${selectedBooking.public_token}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-2xs"
+                                >
+                                    <ExternalLink size={14} /> Open Live Page
+                                </a>
+
+                                <button
+                                    onClick={() => handleSendBookingSms(selectedBooking, selectedBooking.status === 'Completed' ? 'completed' : (selectedBooking.driver_id ? 'driver_allocated' : 'confirmation'))}
+                                    disabled={smsSendingState.id === selectedBooking.id}
+                                    className="px-3.5 py-1.5 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors disabled:opacity-50 shadow-2xs"
+                                >
+                                    {smsSendingState.id === selectedBooking.id ? <Loader2 size={14} className="animate-spin" /> : <MessageSquare size={14} />}
+                                    Send SMS to Guest
                                 </button>
                             </div>
                         </div>

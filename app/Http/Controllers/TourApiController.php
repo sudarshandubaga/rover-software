@@ -16,39 +16,110 @@ use App\Models\Followup;
 use App\Models\Quotation;
 use App\Models\Booking;
 use App\Models\Receipt;
+use App\Models\SmsLog;
+use App\Services\SmsService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class TourApiController extends Controller
 {
+    /**
+     * Apply role-based data scoping:
+     * - Managers can only see data added by them (user_id = Auth::id())
+     * - Super Admins can see all data added by anyone (and optionally filter by manager_id or branch_id)
+     */
+    protected function applyScoping($query, Request $request)
+    {
+        $user = $request->user();
+        if ($user && $user->isManager()) {
+            $query->where('user_id', $user->id);
+        } elseif ($user && $user->isSuperAdmin()) {
+            if ($request->has('manager_id') && !empty($request->manager_id)) {
+                $query->where('user_id', $request->manager_id);
+            }
+            if ($request->has('branch_id') && !empty($request->branch_id)) {
+                $query->where('branch_id', $request->branch_id);
+            }
+        }
+        return $query;
+    }
+
+    /**
+     * Ensure a manager can only mutate data created by them.
+     */
+    protected function checkOwnership($model, Request $request, string $entityName = 'record')
+    {
+        $user = $request->user();
+        if ($user && $user->isManager()) {
+            if ($model->user_id && $model->user_id != $user->id) {
+                abort(403, "Unauthorized: You can only manage {$entityName}s created by you.");
+            }
+        }
+    }
+
     // ==========================================
     // DASHBOARD STATS
     // ==========================================
-    public function dashboardStats()
+    public function dashboardStats(Request $request)
     {
-        $activeBookings = Booking::whereIn('status', ['Pending', 'Active'])->count();
-        $totalVehicles = Vehicle::count();
-        $activeDrivers = Driver::where('status', 'active')->count();
-        $openLeads = Lead::whereNotIn('status', ['Converted', 'Lost'])->count();
+        $user = $request->user();
+        $isManager = $user && $user->isManager();
 
-        $pendingFollowups = Followup::where('status', 'Pending')
-            ->whereDate('date_time', '<=', Carbon::today())
-            ->count();
-
-        // Revenue this month
-        $currentMonthReceipts = Receipt::whereMonth('date', Carbon::now()->month)
-            ->whereYear('date', Carbon::now()->year)
-            ->sum('amount');
-
-        // Bookings count grouped by month (last 6 months)
-        $bookingTrends = Booking::select(
+        $activeBookingsQuery = Booking::whereIn('status', ['Pending', 'Active']);
+        $vehiclesQuery = Vehicle::query();
+        $driversQuery = Driver::where('status', 'active');
+        $leadsQuery = Lead::whereNotIn('status', ['Converted', 'Lost']);
+        $receiptsQuery = Receipt::whereMonth('date', Carbon::now()->month)->whereYear('date', Carbon::now()->year);
+        $trendsQuery = Booking::select(
             DB::raw('count(*) as count'),
             DB::raw("DATE_FORMAT(from_date_time, '%Y-%m') as month")
-        )
-            ->groupBy('month')
-            ->orderBy('month', 'desc')
-            ->limit(6)
-            ->get();
+        );
+
+        if ($isManager) {
+            $activeBookingsQuery->where('user_id', $user->id);
+            $vehiclesQuery->where('user_id', $user->id);
+            $driversQuery->where('user_id', $user->id);
+            $leadsQuery->where('user_id', $user->id);
+            $receiptsQuery->where('user_id', $user->id);
+            $trendsQuery->where('user_id', $user->id);
+
+            $pendingFollowups = Followup::where('status', 'Pending')
+                ->whereDate('date_time', '<=', Carbon::today())
+                ->whereHas('lead', function ($q) use ($user) {
+                    $q->where('user_id', $user->id);
+                })
+                ->count();
+        } else {
+            // Super Admin filters (if provided)
+            if ($request->has('manager_id') && !empty($request->manager_id)) {
+                $mId = $request->manager_id;
+                $activeBookingsQuery->where('user_id', $mId);
+                $vehiclesQuery->where('user_id', $mId);
+                $driversQuery->where('user_id', $mId);
+                $leadsQuery->where('user_id', $mId);
+                $receiptsQuery->where('user_id', $mId);
+                $trendsQuery->where('user_id', $mId);
+            }
+            if ($request->has('branch_id') && !empty($request->branch_id)) {
+                $bId = $request->branch_id;
+                $activeBookingsQuery->where('branch_id', $bId);
+                $vehiclesQuery->where('branch_id', $bId);
+                $driversQuery->where('branch_id', $bId);
+                $leadsQuery->where('branch_id', $bId);
+            }
+
+            $pendingFollowups = Followup::where('status', 'Pending')
+                ->whereDate('date_time', '<=', Carbon::today())
+                ->count();
+        }
+
+        $activeBookings = $activeBookingsQuery->count();
+        $totalVehicles = $vehiclesQuery->count();
+        $activeDrivers = $driversQuery->count();
+        $openLeads = $leadsQuery->count();
+        $currentMonthReceipts = $receiptsQuery->sum('amount');
+        $bookingTrends = $trendsQuery->groupBy('month')->orderBy('month', 'desc')->limit(6)->get();
 
         return response()->json([
             'active_bookings' => $activeBookings,
@@ -116,9 +187,11 @@ class TourApiController extends Controller
     // ==========================================
     // DRIVER CRUD
     // ==========================================
-    public function getDrivers()
+    public function getDrivers(Request $request)
     {
-        return response()->json(Driver::with('firm')->orderBy('name')->get());
+        $query = Driver::with(['firm', 'user:id,name,username', 'branch:id,name,code']);
+        $this->applyScoping($query, $request);
+        return response()->json($query->orderBy('name')->get());
     }
 
     public function storeDriver(Request $request)
@@ -134,12 +207,17 @@ class TourApiController extends Controller
             'status' => 'required|string|in:active,inactive',
         ]);
 
+        $validated['user_id'] = $request->user()->id;
+        $validated['branch_id'] = $request->user()->branch_id;
+
         $driver = Driver::create($validated);
-        return response()->json($driver, 201);
+        return response()->json($driver->load(['firm', 'user', 'branch']), 201);
     }
 
     public function updateDriver(Request $request, Driver $driver)
     {
+        $this->checkOwnership($driver, $request, 'driver');
+
         $validated = $request->validate([
             'firm_id' => 'nullable|exists:firms,id',
             'name' => 'required|string|max:255',
@@ -152,11 +230,12 @@ class TourApiController extends Controller
         ]);
 
         $driver->update($validated);
-        return response()->json($driver);
+        return response()->json($driver->load(['firm', 'user', 'branch']));
     }
 
-    public function destroyDriver(Driver $driver)
+    public function destroyDriver(Request $request, Driver $driver)
     {
+        $this->checkOwnership($driver, $request, 'driver');
         $driver->delete();
         return response()->json(['message' => 'Driver deleted successfully']);
     }
@@ -164,9 +243,11 @@ class TourApiController extends Controller
     // ==========================================
     // CLIENT CRUD
     // ==========================================
-    public function getClients()
+    public function getClients(Request $request)
     {
-        return response()->json(Client::orderBy('name')->get());
+        $query = Client::with(['user:id,name,username', 'branch:id,name,code']);
+        $this->applyScoping($query, $request);
+        return response()->json($query->orderBy('name')->get());
     }
 
     public function storeClient(Request $request)
@@ -181,12 +262,17 @@ class TourApiController extends Controller
             'department' => 'nullable|string|max:255',
         ]);
 
+        $validated['user_id'] = $request->user()->id;
+        $validated['branch_id'] = $request->user()->branch_id;
+
         $client = Client::create($validated);
-        return response()->json($client, 201);
+        return response()->json($client->load(['user', 'branch']), 201);
     }
 
     public function updateClient(Request $request, Client $client)
     {
+        $this->checkOwnership($client, $request, 'client');
+
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'phone' => 'required|string|max:20',
@@ -198,11 +284,12 @@ class TourApiController extends Controller
         ]);
 
         $client->update($validated);
-        return response()->json($client);
+        return response()->json($client->load(['user', 'branch']));
     }
 
-    public function destroyClient(Client $client)
+    public function destroyClient(Request $request, Client $client)
     {
+        $this->checkOwnership($client, $request, 'client');
         $client->delete();
         return response()->json(['message' => 'Client deleted successfully']);
     }
@@ -210,9 +297,11 @@ class TourApiController extends Controller
     // ==========================================
     // VEHICLE CRUD
     // ==========================================
-    public function getVehicles()
+    public function getVehicles(Request $request)
     {
-        return response()->json(Vehicle::orderBy('vehicle_number')->get());
+        $query = Vehicle::with(['user:id,name,username', 'branch:id,name,code']);
+        $this->applyScoping($query, $request);
+        return response()->json($query->orderBy('vehicle_number')->get());
     }
 
     public function storeVehicle(Request $request)
@@ -229,12 +318,17 @@ class TourApiController extends Controller
             'puc_expiry' => 'nullable|date',
         ]);
 
+        $validated['user_id'] = $request->user()->id;
+        $validated['branch_id'] = $request->user()->branch_id;
+
         $vehicle = Vehicle::create($validated);
-        return response()->json($vehicle, 201);
+        return response()->json($vehicle->load(['user', 'branch']), 201);
     }
 
     public function updateVehicle(Request $request, Vehicle $vehicle)
     {
+        $this->checkOwnership($vehicle, $request, 'vehicle');
+
         $validated = $request->validate([
             'vehicle_number' => 'required|string|max:30|unique:vehicles,vehicle_number,' . $vehicle->id,
             'model' => 'required|string|max:255',
@@ -248,11 +342,12 @@ class TourApiController extends Controller
         ]);
 
         $vehicle->update($validated);
-        return response()->json($vehicle);
+        return response()->json($vehicle->load(['user', 'branch']));
     }
 
-    public function destroyVehicle(Vehicle $vehicle)
+    public function destroyVehicle(Request $request, Vehicle $vehicle)
     {
+        $this->checkOwnership($vehicle, $request, 'vehicle');
         $vehicle->delete();
         return response()->json(['message' => 'Vehicle deleted successfully']);
     }
@@ -260,9 +355,11 @@ class TourApiController extends Controller
     // ==========================================
     // EVENT CRUD
     // ==========================================
-    public function getEvents()
+    public function getEvents(Request $request)
     {
-        return response()->json(Event::orderBy('start_date', 'desc')->get());
+        $query = Event::with(['user:id,name,username', 'branch:id,name,code']);
+        $this->applyScoping($query, $request);
+        return response()->json($query->orderBy('start_date', 'desc')->get());
     }
 
     public function storeEvent(Request $request)
@@ -277,12 +374,17 @@ class TourApiController extends Controller
             'remarks' => 'nullable|string',
         ]);
 
+        $validated['user_id'] = $request->user()->id;
+        $validated['branch_id'] = $request->user()->branch_id;
+
         $event = Event::create($validated);
-        return response()->json($event, 201);
+        return response()->json($event->load(['user', 'branch']), 201);
     }
 
     public function updateEvent(Request $request, Event $event)
     {
+        $this->checkOwnership($event, $request, 'event');
+
         $validated = $request->validate([
             'title' => 'required|string|max:255',
             'description' => 'nullable|string',
@@ -294,11 +396,12 @@ class TourApiController extends Controller
         ]);
 
         $event->update($validated);
-        return response()->json($event);
+        return response()->json($event->load(['user', 'branch']));
     }
 
-    public function destroyEvent(Event $event)
+    public function destroyEvent(Request $request, Event $event)
     {
+        $this->checkOwnership($event, $request, 'event');
         $event->delete();
         return response()->json(['message' => 'Event deleted successfully']);
     }
@@ -348,9 +451,11 @@ class TourApiController extends Controller
     // ==========================================
     // LEADS & FOLLOWUPS & QUOTATIONS
     // ==========================================
-    public function getLeads()
+    public function getLeads(Request $request)
     {
-        return response()->json(Lead::with(['followups', 'quotations'])->orderBy('created_at', 'desc')->get());
+        $query = Lead::with(['followups', 'quotations', 'user:id,name,username', 'branch:id,name,code']);
+        $this->applyScoping($query, $request);
+        return response()->json($query->orderBy('created_at', 'desc')->get());
     }
 
     public function storeLead(Request $request)
@@ -364,12 +469,17 @@ class TourApiController extends Controller
             'status' => 'required|string|in:New,Contacted,Quoted,Converted,Lost',
         ]);
 
+        $validated['user_id'] = $request->user()->id;
+        $validated['branch_id'] = $request->user()->branch_id;
+
         $lead = Lead::create($validated);
-        return response()->json($lead, 201);
+        return response()->json($lead->load(['followups', 'quotations', 'user', 'branch']), 201);
     }
 
     public function updateLead(Request $request, Lead $lead)
     {
+        $this->checkOwnership($lead, $request, 'lead');
+
         $validated = $request->validate([
             'client_name' => 'required|string|max:255',
             'phone' => 'required|string|max:20',
@@ -380,11 +490,12 @@ class TourApiController extends Controller
         ]);
 
         $lead->update($validated);
-        return response()->json($lead);
+        return response()->json($lead->load(['followups', 'quotations', 'user', 'branch']));
     }
 
-    public function destroyLead(Lead $lead)
+    public function destroyLead(Request $request, Lead $lead)
     {
+        $this->checkOwnership($lead, $request, 'lead');
         $lead->delete();
         return response()->json(['message' => 'Lead deleted successfully']);
     }
@@ -392,6 +503,9 @@ class TourApiController extends Controller
     // Followups
     public function storeFollowup(Request $request)
     {
+        $lead = Lead::findOrFail($request->input('lead_id'));
+        $this->checkOwnership($lead, $request, 'lead');
+
         $validated = $request->validate([
             'lead_id' => 'required|exists:leads,id',
             'date_time' => 'required|date',
@@ -406,6 +520,8 @@ class TourApiController extends Controller
 
     public function updateFollowup(Request $request, Followup $followup)
     {
+        $this->checkOwnership($followup->lead, $request, 'lead');
+
         $validated = $request->validate([
             'date_time' => 'required|date',
             'remarks' => 'required|string',
@@ -417,20 +533,26 @@ class TourApiController extends Controller
         return response()->json($followup);
     }
 
-    public function destroyFollowup(Followup $followup)
+    public function destroyFollowup(Request $request, Followup $followup)
     {
+        $this->checkOwnership($followup->lead, $request, 'lead');
         $followup->delete();
         return response()->json(['message' => 'Followup deleted successfully']);
     }
 
     // Quotations
-    public function getQuotations()
+    public function getQuotations(Request $request)
     {
-        return response()->json(Quotation::with('lead')->orderBy('date', 'desc')->get());
+        $query = Quotation::with(['lead', 'user:id,name,username', 'branch:id,name,code']);
+        $this->applyScoping($query, $request);
+        return response()->json($query->orderBy('date', 'desc')->get());
     }
 
     public function storeQuotation(Request $request)
     {
+        $lead = Lead::findOrFail($request->input('lead_id'));
+        $this->checkOwnership($lead, $request, 'lead');
+
         $validated = $request->validate([
             'lead_id' => 'required|exists:leads,id',
             'quotation_number' => 'required|string|unique:quotations,quotation_number',
@@ -440,19 +562,30 @@ class TourApiController extends Controller
             'status' => 'required|string|in:Draft,Sent,Accepted,Rejected',
         ]);
 
+        $validated['user_id'] = $request->user()->id;
+        $validated['branch_id'] = $request->user()->branch_id;
+
         $quotation = Quotation::create($validated);
 
         // Update Lead status automatically
-        $lead = Lead::find($validated['lead_id']);
         if ($lead && $lead->status == 'New') {
             $lead->update(['status' => 'Quoted']);
         }
 
-        return response()->json($quotation, 201);
+        // Auto-send SMS to customer with public quotation URL
+        try {
+            app(SmsService::class)->sendQuotationSms($quotation);
+        } catch (\Throwable $e) {
+            Log::error("Failed to dispatch quotation SMS: " . $e->getMessage());
+        }
+
+        return response()->json($quotation->load(['lead', 'user', 'branch']), 201);
     }
 
     public function updateQuotation(Request $request, Quotation $quotation)
     {
+        $this->checkOwnership($quotation, $request, 'quotation');
+
         $validated = $request->validate([
             'quotation_number' => 'required|string|unique:quotations,quotation_number,' . $quotation->id,
             'date' => 'required|date',
@@ -469,11 +602,12 @@ class TourApiController extends Controller
             $quotation->lead->update(['status' => 'Lost']);
         }
 
-        return response()->json($quotation);
+        return response()->json($quotation->load(['lead', 'user', 'branch']));
     }
 
-    public function destroyQuotation(Quotation $quotation)
+    public function destroyQuotation(Request $request, Quotation $quotation)
     {
+        $this->checkOwnership($quotation, $request, 'quotation');
         $quotation->delete();
         return response()->json(['message' => 'Quotation deleted successfully']);
     }
@@ -484,11 +618,11 @@ class TourApiController extends Controller
     // ==========================================
     public function getBookings(Request $request)
     {
-        $query = Booking::with(['client', 'bookingType', 'vehicle', 'driver', 'firm', 'receipts']);
+        $query = Booking::with(['client', 'bookingType', 'vehicle', 'driver', 'firm', 'receipts', 'user:id,name,username', 'branch:id,name,code']);
+        $this->applyScoping($query, $request);
 
         // Filter by month
         if ($request->has('month') && !empty($request->month)) {
-            // format: YYYY-MM
             $month = Carbon::parse($request->month);
             $query->where(function ($q) use ($month) {
                 $q->whereMonth('from_date_time', $month->month)
@@ -526,6 +660,8 @@ class TourApiController extends Controller
             ]);
 
             $newClient = Client::create([
+                'user_id' => $request->user()->id,
+                'branch_id' => $request->user()->branch_id,
                 'name' => $clientVal['new_client_name'],
                 'phone' => $clientVal['new_client_phone'],
                 'email' => $clientVal['new_client_email'],
@@ -556,6 +692,8 @@ class TourApiController extends Controller
         ]);
 
         $validated['client_id'] = $client_id;
+        $validated['user_id'] = $request->user()->id;
+        $validated['branch_id'] = $request->user()->branch_id;
 
         // Auto-assign department if not explicitly given, but client has one
         if (empty($validated['department'])) {
@@ -574,11 +712,21 @@ class TourApiController extends Controller
         }
 
         $booking = Booking::create($validated);
-        return response()->json($booking, 201);
+
+        // Auto-send Booking Confirmation SMS with public link
+        try {
+            app(SmsService::class)->sendBookingConfirmationSms($booking->load('client'));
+        } catch (\Throwable $e) {
+            Log::error("Failed to auto-send booking confirmation SMS: " . $e->getMessage());
+        }
+
+        return response()->json($booking->load(['client', 'bookingType', 'vehicle', 'driver', 'firm', 'receipts', 'user', 'branch']), 201);
     }
 
     public function updateBooking(Request $request, Booking $booking)
     {
+        $this->checkOwnership($booking, $request, 'booking');
+
         $validated = $request->validate([
             'client_id' => 'required|exists:clients,id',
             'booking_type_id' => 'nullable|exists:booking_types,id',
@@ -596,9 +744,14 @@ class TourApiController extends Controller
             'remarks' => 'nullable|string',
             'department' => 'nullable|string|max:255',
             'status' => 'required|string|in:Pending,Active,Completed,Cancelled',
+            'driver_id' => 'nullable|exists:drivers,id',
+            'vehicle_id' => 'nullable|exists:vehicles,id',
             'invoice_number' => 'nullable|string',
             'invoice_date' => 'nullable|date',
         ]);
+
+        $oldStatus = $booking->status;
+        $oldDriverId = $booking->driver_id;
 
         // If status changing to Completed and no invoice exists, generate one
         if ($validated['status'] == 'Completed' && empty($booking->invoice_number) && empty($validated['invoice_number'])) {
@@ -607,11 +760,40 @@ class TourApiController extends Controller
         }
 
         $booking->update($validated);
-        return response()->json($booking);
+
+        // SMS Triggers on status & driver updates:
+        // 1. Booking Completed
+        if ($validated['status'] === 'Completed' && $oldStatus !== 'Completed') {
+            try {
+                app(SmsService::class)->sendBookingCompletedSms($booking->load('client'));
+            } catch (\Throwable $e) {
+                Log::error("Failed to dispatch booking complete SMS: " . $e->getMessage());
+            }
+        }
+        // 2. Booking Confirmed / Active
+        elseif ($validated['status'] === 'Active' && $oldStatus !== 'Active') {
+            try {
+                app(SmsService::class)->sendBookingConfirmationSms($booking->load('client'));
+            } catch (\Throwable $e) {
+                Log::error("Failed to dispatch booking confirmation SMS: " . $e->getMessage());
+            }
+        }
+
+        // 3. Driver Allocated or Changed in updateBooking
+        if (!empty($validated['driver_id']) && $validated['driver_id'] != $oldDriverId) {
+            try {
+                app(SmsService::class)->sendDriverAllocatedSms($booking->load(['client', 'driver', 'vehicle']));
+            } catch (\Throwable $e) {
+                Log::error("Failed to dispatch driver allocated SMS: " . $e->getMessage());
+            }
+        }
+
+        return response()->json($booking->load(['client', 'bookingType', 'vehicle', 'driver', 'firm', 'receipts', 'user', 'branch']));
     }
 
-    public function destroyBooking(Booking $booking)
+    public function destroyBooking(Request $request, Booking $booking)
     {
+        $this->checkOwnership($booking, $request, 'booking');
         $booking->delete();
         return response()->json(['message' => 'Booking deleted successfully']);
     }
@@ -619,19 +801,35 @@ class TourApiController extends Controller
     // Driver/Vehicle Allocation
     public function allocateDriver(Request $request, Booking $booking)
     {
+        $this->checkOwnership($booking, $request, 'booking');
+
         $validated = $request->validate([
             'driver_id' => 'nullable|exists:drivers,id',
             'vehicle_id' => 'nullable|exists:vehicles,id',
             'status' => 'required|string|in:Pending,Active,Completed,Cancelled',
         ]);
 
+        $oldDriverId = $booking->driver_id;
         $booking->update($validated);
-        return response()->json($booking->load(['driver', 'vehicle']));
+
+        // Auto-send Driver Allocated SMS with public link
+        if (!empty($validated['driver_id']) && $validated['driver_id'] != $oldDriverId) {
+            try {
+                app(SmsService::class)->sendDriverAllocatedSms($booking->load(['client', 'driver', 'vehicle']));
+            } catch (\Throwable $e) {
+                Log::error("Failed to dispatch driver allocated SMS: " . $e->getMessage());
+            }
+        }
+
+        return response()->json($booking->load(['client', 'bookingType', 'driver', 'vehicle', 'user', 'branch']));
     }
 
     // Receipts
     public function storeReceipt(Request $request)
     {
+        $booking = Booking::findOrFail($request->input('booking_id'));
+        $this->checkOwnership($booking, $request, 'booking');
+
         $validated = $request->validate([
             'booking_id' => 'required|exists:bookings,id',
             'receipt_number' => 'required|string|unique:receipts,receipt_number',
@@ -642,16 +840,18 @@ class TourApiController extends Controller
             'remarks' => 'nullable|string',
         ]);
 
+        $validated['user_id'] = $request->user()->id;
+
         $receipt = Receipt::create($validated);
         return response()->json($receipt, 201);
     }
 
-    public function destroyReceipt(Receipt $receipt)
+    public function destroyReceipt(Request $request, Receipt $receipt)
     {
+        $this->checkOwnership($receipt->booking, $request, 'booking');
         $receipt->delete();
         return response()->json(['message' => 'Receipt deleted successfully']);
     }
-
 
     // Departments
     public function getDepartments()
@@ -686,4 +886,54 @@ class TourApiController extends Controller
         $department->delete();
         return response()->json(null, 204);
     }
+
+    // ==========================================
+    // SMS DISPATCH & AUDIT ENDPOINTS
+    // ==========================================
+
+    /**
+     * Dispatch Quotation SMS manually with public link.
+     */
+    public function sendQuotationSms(Request $request, Quotation $quotation)
+    {
+        $this->checkOwnership($quotation, $request, 'quotation');
+        $result = app(SmsService::class)->sendQuotationSms($quotation);
+        return response()->json($result);
+    }
+
+    /**
+     * Dispatch Booking SMS manually (confirmation, driver_allocated, completed).
+     */
+    public function sendBookingSms(Request $request, Booking $booking)
+    {
+        $this->checkOwnership($booking, $request, 'booking');
+        $type = $request->input('type', 'confirmation');
+
+        $smsService = app(SmsService::class);
+        $result = match ($type) {
+            'driver_allocated' => $smsService->sendDriverAllocatedSms($booking->load(['client', 'driver', 'vehicle'])),
+            'completed' => $smsService->sendBookingCompletedSms($booking->load('client')),
+            default => $smsService->sendBookingConfirmationSms($booking->load('client')),
+        };
+
+        return response()->json($result);
+    }
+
+    /**
+     * Retrieve SMS delivery logs.
+     */
+    public function getSmsLogs(Request $request)
+    {
+        $query = SmsLog::with(['booking', 'quotation'])->orderBy('id', 'desc');
+
+        if ($request->has('booking_id')) {
+            $query->where('booking_id', $request->booking_id);
+        }
+        if ($request->has('quotation_id')) {
+            $query->where('quotation_id', $request->quotation_id);
+        }
+
+        return response()->json($query->take(50)->get());
+    }
 }
+

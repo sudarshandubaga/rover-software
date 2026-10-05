@@ -10,6 +10,8 @@ class Lead extends Model
     use HasFactory;
 
     protected $fillable = [
+        'user_id',
+        'branch_id',
         'client_name',
         'phone',
         'email',
@@ -17,6 +19,16 @@ class Lead extends Model
         'requirements',
         'status',
     ];
+
+    public function user()
+    {
+        return $this->belongsTo(User::class);
+    }
+
+    public function branch()
+    {
+        return $this->belongsTo(Branch::class);
+    }
 
     public function followups()
     {

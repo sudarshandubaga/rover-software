@@ -139,7 +139,19 @@ export default function ClientCrud() {
                                         </div>
                                         <div>
                                             <h3 className="font-bold text-slate-800 leading-tight">{client.name}</h3>
-                                            <span className="text-slate-400 text-xs">Client ID: #{client.id}</span>
+                                            <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                                                <span className="text-slate-400 text-xs">#{client.id}</span>
+                                                {client.branch && (
+                                                    <span className="text-[9px] font-bold bg-indigo-50 text-indigo-700 px-1.5 py-0.2 rounded border border-indigo-200 font-mono">
+                                                        {client.branch.code}
+                                                    </span>
+                                                )}
+                                                {client.user && (
+                                                    <span className="text-[10px] text-slate-400 font-medium">
+                                                        by {client.user.name}
+                                                    </span>
+                                                )}
+                                            </div>
                                         </div>
                                     </div>
                                     <div className="flex gap-1">

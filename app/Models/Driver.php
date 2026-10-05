@@ -10,6 +10,8 @@ class Driver extends Model
     use HasFactory;
 
     protected $fillable = [
+        'user_id',
+        'branch_id',
         'firm_id',
         'name',
         'phone',
@@ -19,6 +21,16 @@ class Driver extends Model
         'address',
         'status',
     ];
+
+    public function user()
+    {
+        return $this->belongsTo(User::class);
+    }
+
+    public function branch()
+    {
+        return $this->belongsTo(Branch::class);
+    }
 
     public function firm()
     {

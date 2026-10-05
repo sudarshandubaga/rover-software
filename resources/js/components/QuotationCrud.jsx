@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Plus, Edit2, Trash2, FileText, Search, X, User, Printer, PlusCircle, MinusCircle } from 'lucide-react';
+import { Plus, Edit2, Trash2, FileText, Search, X, User, Printer, PlusCircle, MinusCircle, Link2, ExternalLink, MessageSquare, Check, Loader2, Compass } from 'lucide-react';
 
-export default function QuotationCrud({ prefillLead = null, onConsumePrefill = null }) {
+export default function QuotationCrud({ currentUser = null, prefillLead = null, onConsumePrefill = null, onSendToBooking = null }) {
     const [quotations, setQuotations] = useState([]);
     const [leads, setLeads] = useState([]);
     const [search, setSearch] = useState('');
@@ -20,6 +20,9 @@ export default function QuotationCrud({ prefillLead = null, onConsumePrefill = n
     });
     const [loading, setLoading] = useState(false);
     const [activePrint, setActivePrint] = useState(null);
+    const [copiedId, setCopiedId] = useState(null);
+    const [smsSendingId, setSmsSendingId] = useState(null);
+    const [toastMsg, setToastMsg] = useState(null);
 
     useEffect(() => {
         fetchQuotations();
@@ -158,6 +161,30 @@ export default function QuotationCrud({ prefillLead = null, onConsumePrefill = n
         }
     };
 
+    const handleCopyLink = (quote) => {
+        const url = quote.public_url || `${window.location.origin}/q/${quote.public_token}`;
+        navigator.clipboard.writeText(url);
+        setCopiedId(quote.id);
+        setTimeout(() => setCopiedId(null), 2500);
+    };
+
+    const handleSendSms = async (quote) => {
+        setSmsSendingId(quote.id);
+        try {
+            const res = await axios.post(`/api/quotations/${quote.id}/send-sms`);
+            if (res.data?.success) {
+                setToastMsg({ type: 'success', text: `SMS dispatched successfully to ${res.data.recipient}!` });
+            } else {
+                setToastMsg({ type: 'error', text: res.data?.error || 'Failed to dispatch SMS' });
+            }
+        } catch (err) {
+            setToastMsg({ type: 'error', text: err.response?.data?.message || 'Error sending SMS' });
+        } finally {
+            setSmsSendingId(null);
+            setTimeout(() => setToastMsg(null), 4000);
+        }
+    };
+
     const filteredQuotations = quotations.filter(q =>
         q.quotation_number.toLowerCase().includes(search.toLowerCase()) ||
         (q.lead && q.lead.client_name.toLowerCase().includes(search.toLowerCase()))
@@ -177,6 +204,19 @@ export default function QuotationCrud({ prefillLead = null, onConsumePrefill = n
                     <Plus size={18} /> Generate Quotation
                 </button>
             </div>
+
+            {toastMsg && (
+                <div className={`p-4 rounded-xl text-sm font-semibold flex items-center justify-between shadow-sm border ${
+                    toastMsg.type === 'success' 
+                        ? 'bg-emerald-50 text-emerald-800 border-emerald-200' 
+                        : 'bg-rose-50 text-rose-800 border-rose-200'
+                }`}>
+                    <span>{toastMsg.text}</span>
+                    <button onClick={() => setToastMsg(null)} className="text-xs uppercase tracking-wider font-bold opacity-75 hover:opacity-100">
+                        Dismiss
+                    </button>
+                </div>
+            )}
 
             {/* Filter and Search */}
             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-3">
@@ -249,6 +289,49 @@ export default function QuotationCrud({ prefillLead = null, onConsumePrefill = n
                                         </td>
                                         <td className="p-4 text-right">
                                             <div className="flex items-center justify-end gap-1">
+                                                {/* Copy Public Link */}
+                                                <button
+                                                    onClick={() => handleCopyLink(quote)}
+                                                    className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                                                    title={copiedId === quote.id ? "Link Copied!" : "Copy Public URL to Clipboard"}
+                                                >
+                                                    {copiedId === quote.id ? <Check size={16} className="text-emerald-600" /> : <Link2 size={16} />}
+                                                </button>
+
+                                                {/* Open Public Page */}
+                                                <a
+                                                    href={quote.public_url || `/q/${quote.public_token}`}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                                                    title="Open Public Customer View"
+                                                >
+                                                    <ExternalLink size={16} />
+                                                </a>
+
+                                                {/* Send SMS to Customer */}
+                                                <button
+                                                    onClick={() => handleSendSms(quote)}
+                                                    disabled={smsSendingId === quote.id}
+                                                    className="p-1.5 text-slate-400 hover:text-sky-600 hover:bg-sky-50 rounded-lg transition-colors disabled:opacity-50"
+                                                    title="Send Quotation SMS with Link to Customer"
+                                                >
+                                                    {smsSendingId === quote.id ? (
+                                                        <Loader2 size={16} className="animate-spin text-sky-600" />
+                                                    ) : (
+                                                        <MessageSquare size={16} />
+                                                    )}
+                                                </button>
+
+                                                {/* Create Booking from Quotation */}
+                                                <button
+                                                    onClick={() => onSendToBooking && onSendToBooking(quote)}
+                                                    className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                                                    title="Create Booking from Quotation"
+                                                >
+                                                    <Compass size={16} />
+                                                </button>
+
                                                 <button
                                                     onClick={() => setActivePrint(quote)}
                                                     className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
@@ -283,19 +366,60 @@ export default function QuotationCrud({ prefillLead = null, onConsumePrefill = n
             {/* Print View Overlay */}
             {activePrint && (
                 <div className="fixed inset-0 z-[100] bg-white flex flex-col items-center py-10 overflow-y-auto print:py-0 print:bg-white">
-                    <div className="w-full max-w-4xl px-4 flex justify-between items-center mb-6 print:hidden">
+                    <div className="w-full max-w-4xl px-4 flex flex-wrap justify-between items-center gap-3 mb-6 print:hidden">
                         <button
                             onClick={() => setActivePrint(null)}
-                            className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-lg flex items-center gap-2 font-medium"
+                            className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-lg flex items-center gap-2 font-medium text-sm"
                         >
                             <X size={18} /> Close
                         </button>
-                        <button
-                            onClick={() => window.print()}
-                            className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-lg flex items-center gap-2 font-medium shadow-sm"
-                        >
-                            <Printer size={18} /> Print Quotation
-                        </button>
+
+                        <div className="flex items-center gap-2 flex-wrap">
+                            <button
+                                onClick={() => {
+                                    const quoteToConvert = activePrint;
+                                    setActivePrint(null);
+                                    if (onSendToBooking) onSendToBooking(quoteToConvert);
+                                }}
+                                className="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-lg flex items-center gap-1.5 font-semibold text-xs shadow-sm transition-colors"
+                                title="Create Booking from this Quotation"
+                            >
+                                <Compass size={15} /> Create Booking
+                            </button>
+
+                            <button
+                                onClick={() => handleCopyLink(activePrint)}
+                                className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 px-3.5 py-2 rounded-lg flex items-center gap-1.5 font-semibold text-xs transition-colors"
+                            >
+                                {copiedId === activePrint.id ? <Check size={15} /> : <Link2 size={15} />}
+                                {copiedId === activePrint.id ? 'Copied Public Link!' : 'Copy Public Link'}
+                            </button>
+
+                            <a
+                                href={activePrint.public_url || `/q/${activePrint.public_token}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3.5 py-2 rounded-lg flex items-center gap-1.5 font-semibold text-xs transition-colors"
+                            >
+                                <ExternalLink size={15} /> Open Web Page
+                            </a>
+
+                            <button
+                                onClick={() => handleSendSms(activePrint)}
+                                disabled={smsSendingId === activePrint.id}
+                                className="bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 px-3.5 py-2 rounded-lg flex items-center gap-1.5 font-semibold text-xs transition-colors disabled:opacity-50"
+                            >
+                                {smsSendingId === activePrint.id ? <Loader2 size={15} className="animate-spin text-sky-600" /> : <MessageSquare size={15} />}
+                                Send SMS
+                            </button>
+
+                            <button
+                                onClick={() => window.print()}
+                                className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-lg flex items-center gap-1.5 font-semibold text-xs shadow-sm transition-colors"
+                            >
+                                <Printer size={15} /> Print Document
+                            </button>
+                        </div>
                     </div>
 
                     <div className="w-full max-w-3xl bg-white border border-slate-200 shadow-xl print:shadow-none print:border-none rounded-xl p-10 print:p-0 print:m-0">
@@ -515,20 +639,39 @@ export default function QuotationCrud({ prefillLead = null, onConsumePrefill = n
                                 </div>
                             </div>
 
-                            <div className="border-t border-slate-100 pt-4 flex justify-end gap-3">
-                                <button
-                                    type="button"
-                                    onClick={handleCloseModal}
-                                    className="px-4 py-2 border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 text-sm transition-colors"
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    type="submit"
-                                    className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg text-sm transition-colors"
-                                >
-                                    Save Quotation
-                                </button>
+                            <div className="border-t border-slate-100 pt-4 flex items-center justify-between gap-3">
+                                <div>
+                                    {formData.id && onSendToBooking && (
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                const currentLead = leads.find(l => String(l.id) === String(formData.lead_id));
+                                                const quoteData = { ...formData, lead: currentLead };
+                                                handleCloseModal();
+                                                onSendToBooking(quoteData);
+                                            }}
+                                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-lg text-sm transition-colors flex items-center gap-1.5 shadow-sm"
+                                            title="Convert this Quotation to a Booking directly"
+                                        >
+                                            <Compass size={16} /> Create Booking
+                                        </button>
+                                    )}
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    <button
+                                        type="button"
+                                        onClick={handleCloseModal}
+                                        className="px-4 py-2 border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 text-sm transition-colors"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        type="submit"
+                                        className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg text-sm transition-colors"
+                                    >
+                                        Save Quotation
+                                    </button>
+                                </div>
                             </div>
                         </form>
                     </div>

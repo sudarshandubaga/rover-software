@@ -10,6 +10,7 @@ class Receipt extends Model
     use HasFactory;
 
     protected $fillable = [
+        'user_id',
         'booking_id',
         'receipt_number',
         'date',
@@ -22,6 +23,11 @@ class Receipt extends Model
     protected $casts = [
         'date' => 'date',
     ];
+
+    public function user()
+    {
+        return $this->belongsTo(User::class);
+    }
 
     public function booking()
     {

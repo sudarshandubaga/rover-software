@@ -14,20 +14,43 @@ class AuthController extends Controller
     public function login(Request $request)
     {
         $validated = $request->validate([
-            'email' => 'required|email',
+            'email' => 'nullable|string',
+            'username' => 'nullable|string',
+            'login' => 'nullable|string',
             'password' => 'required|string',
         ]);
 
-        if (!Auth::attempt($validated)) {
-            return response()->json(['message' => 'Invalid email or password'], 401);
+        $loginIdentifier = $request->input('login') 
+            ?? $request->input('username') 
+            ?? $request->input('email');
+
+        if (!$loginIdentifier) {
+            return response()->json(['message' => 'Username or email is required'], 422);
         }
 
-        $user = Auth::user();
+        $fieldType = filter_var($loginIdentifier, FILTER_VALIDATE_EMAIL) ? 'email' : 'username';
+
+        $credentials = [
+            $fieldType => $loginIdentifier,
+            'password' => $request->input('password'),
+        ];
+
+        if (!Auth::guard('web')->attempt($credentials)) {
+            return response()->json(['message' => 'Invalid credentials. Please verify your username/email and password.'], 401);
+        }
+
+        $user = Auth::guard('web')->user();
+
+        if ($user->status && $user->status !== 'active') {
+            Auth::guard('web')->logout();
+            return response()->json(['message' => 'Your account is currently inactive. Please contact Super Admin.'], 403);
+        }
+
         $token = $user->createToken('panel')->plainTextToken;
 
         return response()->json([
             'token' => $token,
-            'user' => $user,
+            'user' => $user->load('branch'),
         ]);
     }
 
@@ -41,15 +64,15 @@ class AuthController extends Controller
     }
 
     /**
-     * Return the currently authenticated user.
+     * Return the currently authenticated user with branch.
      */
     public function profile(Request $request)
     {
-        return response()->json($request->user());
+        return response()->json($request->user()->load('branch'));
     }
 
     /**
-     * Update the authenticated user's profile (name / email).
+     * Update the authenticated user's profile (name / email / phone).
      */
     public function updateProfile(Request $request)
     {
@@ -58,10 +81,11 @@ class AuthController extends Controller
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'email' => 'required|email|max:255|unique:users,email,' . $user->id,
+            'phone' => 'nullable|string|max:20',
         ]);
 
         $user->update($validated);
-        return response()->json($user);
+        return response()->json($user->load('branch'));
     }
 
     /**

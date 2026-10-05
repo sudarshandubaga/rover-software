@@ -162,8 +162,19 @@ export default function DriverCrud() {
                                                 </div>
                                                 <div>
                                                     <div className="font-bold text-slate-800">{driver.name}</div>
-                                                    <div className="text-xs text-slate-400">
-                                                        Driver ID: #{driver.id} {driver.firm && `• Firm: ${driver.firm.name}`}
+                                                    <div className="text-xs text-slate-400 flex items-center gap-1.5 flex-wrap">
+                                                        <span>Driver #{driver.id}</span>
+                                                        {driver.firm && <span>• {driver.firm.name}</span>}
+                                                        {driver.branch && (
+                                                            <span className="text-[9px] font-bold bg-indigo-50 text-indigo-700 px-1.5 py-0.2 rounded border border-indigo-200 font-mono">
+                                                                {driver.branch.code}
+                                                            </span>
+                                                        )}
+                                                        {driver.user && (
+                                                            <span className="text-[10px] text-slate-400 font-medium">
+                                                                by {driver.user.name}
+                                                            </span>
+                                                        )}
                                                     </div>
                                                 </div>
                                             </div>

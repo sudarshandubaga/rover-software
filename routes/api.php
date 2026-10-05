@@ -5,9 +5,14 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\TourApiController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\SettingsController;
+use App\Http\Controllers\BranchController;
+use App\Http\Controllers\UserController;
+use App\Http\Controllers\PublicViewController;
 
-// Public authentication
+// Public endpoints
 Route::post('/login', [AuthController::class, 'login']);
+Route::get('/public/quotations/{token}', [PublicViewController::class, 'apiQuotation']);
+Route::get('/public/bookings/{token}', [PublicViewController::class, 'apiBooking']);
 
 // All other endpoints require a valid Sanctum token
 Route::middleware('auth:sanctum')->group(function () {
@@ -20,6 +25,8 @@ Route::middleware('auth:sanctum')->group(function () {
     // Settings
     Route::get('/settings/sms', [SettingsController::class, 'getSmsSettings']);
     Route::put('/settings/sms', [SettingsController::class, 'updateSmsSettings']);
+    Route::get('/settings/sms-templates', [SettingsController::class, 'getSmsTemplates']);
+    Route::put('/settings/sms-templates', [SettingsController::class, 'updateSmsTemplates']);
 
     Route::get('/dashboard-stats', [TourApiController::class, 'dashboardStats']);
 
@@ -75,6 +82,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/quotations', [TourApiController::class, 'storeQuotation']);
     Route::put('/quotations/{quotation}', [TourApiController::class, 'updateQuotation']);
     Route::delete('/quotations/{quotation}', [TourApiController::class, 'destroyQuotation']);
+    Route::post('/quotations/{quotation}/send-sms', [TourApiController::class, 'sendQuotationSms']);
 
     // Departments
     Route::get('/departments', [TourApiController::class, 'getDepartments']);
@@ -88,9 +96,24 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/bookings/{booking}', [TourApiController::class, 'updateBooking']);
     Route::delete('/bookings/{booking}', [TourApiController::class, 'destroyBooking']);
     Route::put('/bookings/{booking}/allocate', [TourApiController::class, 'allocateDriver']);
+    Route::post('/bookings/{booking}/send-sms', [TourApiController::class, 'sendBookingSms']);
+    Route::get('/sms-logs', [TourApiController::class, 'getSmsLogs']);
 
     // Receipts
     Route::post('/receipts', [TourApiController::class, 'storeReceipt']);
     Route::delete('/receipts/{receipt}', [TourApiController::class, 'destroyReceipt']);
+
+    // Branches CRUD
+    Route::get('/branches', [BranchController::class, 'index']);
+    Route::post('/branches', [BranchController::class, 'store']);
+    Route::put('/branches/{branch}', [BranchController::class, 'update']);
+    Route::delete('/branches/{branch}', [BranchController::class, 'destroy']);
+
+    // User & Manager Management (Super Admin)
+    Route::get('/users', [UserController::class, 'index']);
+    Route::post('/users', [UserController::class, 'store']);
+    Route::put('/users/{user}', [UserController::class, 'update']);
+    Route::delete('/users/{user}', [UserController::class, 'destroy']);
+    Route::put('/users/{user}/password', [UserController::class, 'resetPassword']);
 });
 

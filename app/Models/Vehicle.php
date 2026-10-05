@@ -10,6 +10,8 @@ class Vehicle extends Model
     use HasFactory;
 
     protected $fillable = [
+        'user_id',
+        'branch_id',
         'vehicle_number',
         'model',
         'brand',
@@ -20,6 +22,16 @@ class Vehicle extends Model
         'insurance_expiry',
         'puc_expiry',
     ];
+
+    public function user()
+    {
+        return $this->belongsTo(User::class);
+    }
+
+    public function branch()
+    {
+        return $this->belongsTo(Branch::class);
+    }
 
     public function bookings()
     {

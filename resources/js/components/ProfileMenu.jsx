@@ -38,13 +38,7 @@ export default function ProfileMenu({ user, onLogout, onUserChange }) {
 
     // SMS settings
     const [smsForm, setSmsForm] = useState({
-        provider: '',
-        sender_id: '',
-        api_key: '',
-        api_secret: '',
-        route: 'transactional',
-        url: '',
-        enabled: false
+        url: 'https://smsweb.smsleases.com/app/smsapi/index.php?key=569AA885995E9C&campaign=0&routeid=9&type=text&contacts=[MobileNo]&senderid=ROVRAJ&msg=[Message]&template_id=[TemplateID]'
     });
     const [smsMsg, setSmsMsg] = useState(null);
 
@@ -147,13 +141,7 @@ export default function ProfileMenu({ user, onLogout, onUserChange }) {
         try {
             const res = await axios.get('/api/settings/sms');
             setSmsForm({
-                provider: res.data.provider || '',
-                sender_id: res.data.sender_id || '',
-                api_key: res.data.api_key || '',
-                api_secret: res.data.api_secret || '',
-                route: res.data.route || 'transactional',
-                url: res.data.url || '',
-                enabled: !!res.data.enabled
+                url: res.data.url || ''
             });
         } catch (err) {
             console.error(err);
@@ -167,13 +155,7 @@ export default function ProfileMenu({ user, onLogout, onUserChange }) {
         try {
             const res = await axios.put('/api/settings/sms', smsForm);
             setSmsForm({
-                provider: res.data.provider || '',
-                sender_id: res.data.sender_id || '',
-                api_key: res.data.api_key || '',
-                api_secret: res.data.api_secret || '',
-                route: res.data.route || 'transactional',
-                url: res.data.url || '',
-                enabled: !!res.data.enabled
+                url: res.data.url || ''
             });
             setSmsMsg({ type: 'success', text: 'SMS settings saved successfully.' });
         } catch (err) {
@@ -229,10 +211,26 @@ export default function ProfileMenu({ user, onLogout, onUserChange }) {
                 {open && (
                     <>
                         <div className="fixed inset-0 z-20" onClick={() => setOpen(false)}></div>
-                        <div className="absolute right-0 mt-2 w-60 bg-white rounded-xl border border-slate-200 shadow-xl z-30 overflow-hidden">
-                            <div className="px-4 py-3 border-b border-slate-100 bg-slate-50/60">
+                        <div className="absolute right-0 mt-2 w-64 bg-white rounded-2xl border border-slate-200 shadow-xl z-30 overflow-hidden">
+                            <div className="px-4 py-3.5 border-b border-slate-100 bg-slate-50/70">
                                 <div className="text-sm font-bold text-slate-800 truncate">{user?.name}</div>
                                 <div className="text-xs text-slate-400 truncate">{user?.email}</div>
+                                <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                                    {user?.role === 'super_admin' ? (
+                                        <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-md bg-purple-100 text-purple-700 border border-purple-200">
+                                            Super Admin
+                                        </span>
+                                    ) : (
+                                        <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-md bg-indigo-100 text-indigo-700 border border-indigo-200">
+                                            Manager
+                                        </span>
+                                    )}
+                                    {user?.branch && (
+                                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-slate-200/70 text-slate-700">
+                                            {user.branch.name}
+                                        </span>
+                                    )}
+                                </div>
                             </div>
                             <div className="py-1">
                                 <button
@@ -447,89 +445,21 @@ export default function ProfileMenu({ user, onLogout, onUserChange }) {
                 <ModalShell title="SMS Settings" onClose={() => setModal(null)}>
                     <form onSubmit={saveSms} className="p-6 overflow-y-auto space-y-4">
                         <div>
-                            <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">SMS Provider *</label>
-                            <select
-                                required value={smsForm.provider}
-                                onChange={(e) => setSmsForm({ ...smsForm, provider: e.target.value })}
-                                className={inputCls}
-                            >
-                                <option value="">-- Select Provider --</option>
-                                <option value="MSG91">MSG91</option>
-                                <option value="Twilio">Twilio</option>
-                                <option value="Textlocal">Textlocal</option>
-                                <option value="Fast2SMS">Fast2SMS</option>
-                                <option value="RouteMobile">Route Mobile</option>
-                                <option value="Other">Other</option>
-                            </select>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-4">
-                            <div>
-                                <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Sender ID</label>
-                                <input
-                                    type="text" value={smsForm.sender_id}
-                                    onChange={(e) => setSmsForm({ ...smsForm, sender_id: e.target.value })}
-                                    placeholder="e.g. RVRAST"
-                                    className={inputCls}
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Route</label>
-                                <select
-                                    value={smsForm.route}
-                                    onChange={(e) => setSmsForm({ ...smsForm, route: e.target.value })}
-                                    className={inputCls}
-                                >
-                                    <option value="transactional">Transactional</option>
-                                    <option value="promotional">Promotional</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        <div>
-                            <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">API Key</label>
+                            <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">URL with Params *</label>
                             <input
-                                type="password" value={smsForm.api_key}
-                                onChange={(e) => setSmsForm({ ...smsForm, api_key: e.target.value })}
-                                placeholder="Gateway API key / auth token"
-                                className={inputCls}
-                            />
-                        </div>
-
-                        <div>
-                            <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">API Secret</label>
-                            <input
-                                type="password" value={smsForm.api_secret}
-                                onChange={(e) => setSmsForm({ ...smsForm, api_secret: e.target.value })}
-                                placeholder="Gateway API secret (if any)"
-                                className={inputCls}
-                            />
-                        </div>
-
-                        <div>
-                            <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">URL with Params</label>
-                            <input
-                                type="text" value={smsForm.url}
+                                type="text" value={smsForm.url} required
                                 onChange={(e) => setSmsForm({ ...smsForm, url: e.target.value })}
-                                placeholder="https://api.gateway.com/send?authkey=[APIKey]&mobiles=[MobileNo]&message=[Message]"
+                                placeholder="https://smsweb.smsleases.com/app/smsapi/index.php?key=569AA885995E9C&campaign=0&routeid=9&type=text&contacts=[MobileNo]&senderid=ROVRAJ&msg=[Message]&template_id=[TemplateID]"
                                 className={inputCls + " font-mono"}
                             />
                             <p className="mt-1.5 text-[11px] text-slate-400 leading-relaxed">
-                                Use placeholders: <span className="font-mono text-indigo-600">[APIKey]</span>,{" "}
+                                Enter the full gateway URL with its params. Use placeholders for the mobile number,{" "}
+                                message text, and template:{" "}
                                 <span className="font-mono text-indigo-600">[MobileNo]</span>,{" "}
-                                <span className="font-mono text-indigo-600">[Message]</span>.
+                                <span className="font-mono text-indigo-600">[Message]</span>,{" "}
+                                <span className="font-mono text-indigo-600">[TemplateID]</span>.
                             </p>
                         </div>
-
-                        <label className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg p-3 cursor-pointer">
-                            <span className="text-sm text-slate-700 font-medium">Enable SMS Sending</span>
-                            <input
-                                type="checkbox"
-                                checked={smsForm.enabled}
-                                onChange={(e) => setSmsForm({ ...smsForm, enabled: e.target.checked })}
-                                className="h-4 w-4 accent-indigo-600"
-                            />
-                        </label>
 
                         {smsMsg && <FormMsg msg={smsMsg} />}
 

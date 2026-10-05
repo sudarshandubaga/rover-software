@@ -6,11 +6,13 @@ import {
     Clock, DollarSign, MessageSquare, ChevronRight, Compass
 } from 'lucide-react';
 
-export default function LeadsManager({ onSendToQuotation, onSendToBooking }) {
+export default function LeadsManager({ currentUser = null, onSendToQuotation, onSendToBooking }) {
     const [leads, setLeads] = useState([]);
+    const [branches, setBranches] = useState([]);
     const [selectedLead, setSelectedLead] = useState(null);
     const [search, setSearch] = useState('');
     const [statusFilter, setStatusFilter] = useState('All');
+    const [branchFilter, setBranchFilter] = useState('All');
 
     // Modal states
     const [leadModalOpen, setLeadModalOpen] = useState(false);
@@ -45,10 +47,14 @@ export default function LeadsManager({ onSendToQuotation, onSendToBooking }) {
     const fetchLeads = async () => {
         setLoading(true);
         try {
-            const res = await axios.get('/api/leads');
-            setLeads(res.data);
+            const [leadsRes, branchesRes] = await Promise.all([
+                axios.get('/api/leads'),
+                axios.get('/api/branches')
+            ]);
+            setLeads(leadsRes.data);
+            setBranches(branchesRes.data);
             if (selectedLead) {
-                const updated = res.data.find(l => l.id === selectedLead.id);
+                const updated = leadsRes.data.find(l => l.id === selectedLead.id);
                 if (updated) setSelectedLead(updated);
             }
         } catch (err) {
@@ -161,72 +167,122 @@ export default function LeadsManager({ onSendToQuotation, onSendToBooking }) {
             (lead.requirements && lead.requirements.toLowerCase().includes(search.toLowerCase()));
 
         const matchesStatus = statusFilter === 'All' || lead.status === statusFilter;
-        return matchesSearch && matchesStatus;
+        const matchesBranch = branchFilter === 'All' || (lead.branch_id && String(lead.branch_id) === String(branchFilter));
+
+        return matchesSearch && matchesStatus && matchesBranch;
     });
 
     return (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start h-full">
-            {/* Leads Column */}
-            <div className="lg:col-span-1 bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col h-[calc(100vh-12rem)] min-h-[500px]">
-                <div className="p-4 border-b border-slate-100 space-y-3">
-                    <div className="flex items-center justify-between">
-                        <h3 className="font-bold text-slate-800 text-lg">Travel Leads Pipeline</h3>
-                        <button
-                            onClick={() => handleOpenLeadModal()}
-                            className="bg-indigo-600 hover:bg-indigo-700 text-white p-1.5 rounded-lg transition-colors"
-                            title="Add Lead"
-                        >
-                            <Plus size={16} />
-                        </button>
+        <div className="space-y-4 h-full">
+            {/* Manager scope reminder */}
+            {currentUser?.role === 'manager' && (
+                <div className="bg-indigo-50 border border-indigo-200/80 rounded-2xl p-4 text-xs text-indigo-900 flex items-center justify-between shadow-xs">
+                    <div>
+                        <span className="font-bold">Manager Mode:</span> Showing leads and follow-ups created by you for{' '}
+                        <span className="font-bold underline">{currentUser?.branch?.name || 'your assigned branch'}</span>.
                     </div>
+                    {currentUser?.branch?.code && (
+                        <span className="font-mono font-bold bg-white text-indigo-700 px-2.5 py-1 rounded-lg border border-indigo-200 shadow-2xs">
+                            {currentUser.branch.code}
+                        </span>
+                    )}
+                </div>
+            )}
 
-                    <div className="flex gap-2">
-                        <div className="bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg flex items-center gap-2 flex-1">
-                            <Search size={16} className="text-slate-400" />
-                            <input
-                                type="text"
-                                placeholder="Search leads..."
-                                value={search}
-                                onChange={(e) => setSearch(e.target.value)}
-                                className="bg-transparent border-0 outline-none text-xs w-full"
-                            />
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+                {/* Leads Column */}
+                <div className="lg:col-span-1 bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col h-[calc(100vh-14rem)] min-h-[500px]">
+                    <div className="p-4 border-b border-slate-100 space-y-3">
+                        <div className="flex items-center justify-between">
+                            <h3 className="font-bold text-slate-800 text-lg">Travel Leads Pipeline</h3>
+                            <button
+                                onClick={() => handleOpenLeadModal()}
+                                className="bg-indigo-600 hover:bg-indigo-700 text-white p-1.5 rounded-lg transition-colors cursor-pointer"
+                                title="Add Lead"
+                            >
+                                <Plus size={16} />
+                            </button>
                         </div>
 
-                        <select
-                            value={statusFilter}
-                            onChange={(e) => setStatusFilter(e.target.value)}
-                            className="bg-slate-50 border border-slate-200 text-xs px-2 py-1.5 rounded-lg outline-none text-slate-600 focus:border-indigo-600"
-                        >
-                            <option value="All">All Status</option>
-                            <option value="New">New</option>
-                            <option value="Contacted">Contacted</option>
-                            <option value="Quoted">Quoted</option>
-                            <option value="Converted">Converted</option>
-                            <option value="Lost">Lost</option>
-                        </select>
-                    </div>
-                </div>
+                        <div className="flex flex-col gap-2">
+                            <div className="bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg flex items-center gap-2">
+                                <Search size={16} className="text-slate-400" />
+                                <input
+                                    type="text"
+                                    placeholder="Search leads..."
+                                    value={search}
+                                    onChange={(e) => setSearch(e.target.value)}
+                                    className="bg-transparent border-0 outline-none text-xs w-full"
+                                />
+                            </div>
 
-                <div className="flex-1 overflow-y-auto divide-y divide-slate-100">
-                    {loading ? (
-                        <div className="text-center py-8 text-xs text-slate-400">Loading pipeline...</div>
-                    ) : filteredLeads.length === 0 ? (
-                        <div className="text-center py-8 text-xs text-slate-400">No leads found.</div>
-                    ) : (
-                        filteredLeads.map((lead) => (
-                            <div
-                                key={lead.id}
-                                className={`p-4 transition-all border-l-4 hover:bg-indigo-50/20 ${selectedLead?.id === lead.id
-                                        ? 'bg-indigo-50/40 border-l-indigo-600'
-                                        : 'border-l-transparent'
-                                    }`}
-                            >
-                                <div onClick={() => setSelectedLead(lead)} className="cursor-pointer flex items-center justify-between">
-                                    <div className="space-y-1 min-w-0 pr-2">
-                                        <div className="font-semibold text-sm text-slate-800 truncate">{lead.client_name}</div>
-                                        <div className="text-xs text-slate-400 font-mono">{lead.phone}</div>
-                                        <p className="text-slate-500 text-xs truncate max-w-[200px]">{lead.requirements || 'No specifications listed'}</p>
-                                    </div>
+                            <div className="flex gap-2">
+                                {currentUser?.role === 'super_admin' && branches.length > 0 && (
+                                    <select
+                                        value={branchFilter}
+                                        onChange={(e) => setBranchFilter(e.target.value)}
+                                        className="bg-slate-50 border border-slate-200 text-xs px-2 py-1.5 rounded-lg outline-none text-slate-700 font-semibold focus:border-indigo-600 flex-1"
+                                    >
+                                        <option value="All">All Branches</option>
+                                        {branches.map(br => (
+                                            <option key={br.id} value={br.id}>{br.name} ({br.code})</option>
+                                        ))}
+                                    </select>
+                                )}
+
+                                <select
+                                    value={statusFilter}
+                                    onChange={(e) => setStatusFilter(e.target.value)}
+                                    className="bg-slate-50 border border-slate-200 text-xs px-2 py-1.5 rounded-lg outline-none text-slate-600 focus:border-indigo-600 flex-1"
+                                >
+                                    <option value="All">All Status</option>
+                                    <option value="New">New</option>
+                                    <option value="Contacted">Contacted</option>
+                                    <option value="Quoted">Quoted</option>
+                                    <option value="Converted">Converted</option>
+                                    <option value="Lost">Lost</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto divide-y divide-slate-100">
+                        {loading ? (
+                            <div className="text-center py-8 text-xs text-slate-400">Loading pipeline...</div>
+                        ) : filteredLeads.length === 0 ? (
+                            <div className="text-center py-8 text-xs text-slate-400">No leads found.</div>
+                        ) : (
+                            filteredLeads.map((lead) => (
+                                <div
+                                    key={lead.id}
+                                    className={`p-4 transition-all border-l-4 hover:bg-indigo-50/20 ${selectedLead?.id === lead.id
+                                            ? 'bg-indigo-50/40 border-l-indigo-600'
+                                            : 'border-l-transparent'
+                                        }`}
+                                >
+                                    <div onClick={() => setSelectedLead(lead)} className="cursor-pointer flex items-center justify-between">
+                                        <div className="space-y-1 min-w-0 pr-2">
+                                            <div className="font-semibold text-sm text-slate-800 truncate">{lead.client_name}</div>
+                                            <div className="text-xs text-slate-400 font-mono">{lead.phone}</div>
+                                            
+                                            {/* Creator Manager & Branch Info */}
+                                            {(lead.user || lead.branch) && (
+                                                <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                                                    {lead.branch && (
+                                                        <span className="text-[9px] font-bold bg-indigo-50 text-indigo-700 px-1.5 py-0.2 rounded border border-indigo-200 font-mono">
+                                                            {lead.branch.code}
+                                                        </span>
+                                                    )}
+                                                    {lead.user && (
+                                                        <span className="text-[10px] text-slate-400 font-medium">
+                                                            by {lead.user.name}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            )}
+
+                                            <p className="text-slate-500 text-xs truncate max-w-[200px]">{lead.requirements || 'No specifications listed'}</p>
+                                        </div>
                                     <div className="flex flex-col items-end gap-1.5 shrink-0">
                                         <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${lead.status === 'New' ? 'bg-blue-50 text-blue-700' :
                                                 lead.status === 'Contacted' ? 'bg-amber-50 text-amber-700' :
@@ -563,6 +619,7 @@ export default function LeadsManager({ onSendToQuotation, onSendToBooking }) {
                 </div>
             )}
 
+            </div>
         </div>
     );
 }

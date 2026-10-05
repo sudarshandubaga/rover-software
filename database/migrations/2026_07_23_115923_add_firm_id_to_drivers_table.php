@@ -11,9 +11,13 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('drivers', function (Blueprint $table) {
-            $table->foreignId('firm_id')->nullable()->after('id')->constrained('firms')->onDelete('set null');
-        });
+        if (Schema::hasTable('drivers')) {
+            Schema::table('drivers', function (Blueprint $table) {
+                if (!Schema::hasColumn('drivers', 'firm_id')) {
+                    $table->foreignId('firm_id')->nullable()->after('id')->constrained('firms')->onDelete('set null');
+                }
+            });
+        }
     }
 
     /**

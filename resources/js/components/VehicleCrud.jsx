@@ -145,9 +145,21 @@ export default function VehicleCrud() {
                                             <h3 className="font-bold text-slate-800 leading-tight">
                                                 {vehicle.brand ? `${vehicle.brand} ${vehicle.model}` : vehicle.model}
                                             </h3>
-                                            <span className="bg-indigo-50 border border-indigo-100 text-indigo-700 font-mono text-xs px-2 py-0.5 rounded font-bold uppercase tracking-wider mt-1 inline-block">
-                                                {vehicle.vehicle_number}
-                                            </span>
+                                            <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                                                <span className="bg-indigo-50 border border-indigo-100 text-indigo-700 font-mono text-xs px-2 py-0.5 rounded font-bold uppercase tracking-wider inline-block">
+                                                    {vehicle.vehicle_number}
+                                                </span>
+                                                {vehicle.branch && (
+                                                    <span className="text-[9px] font-bold bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded border border-slate-200 font-mono">
+                                                        {vehicle.branch.code}
+                                                    </span>
+                                                )}
+                                                {vehicle.user && (
+                                                    <span className="text-[10px] text-slate-400 font-medium">
+                                                        by {vehicle.user.name}
+                                                    </span>
+                                                )}
+                                            </div>
                                         </div>
                                     </div>
                                     <div className="flex gap-1">

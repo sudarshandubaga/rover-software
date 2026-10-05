@@ -5,7 +5,7 @@ import {
     LayoutDashboard, Tag, Building, Users, Car, Calendar,
     Compass, MessageSquare, ClipboardList, PhoneCall, TrendingUp,
     IndianRupee, Loader2, Menu, X, CheckCircle, Clock, AlertTriangle, ArrowUpRight,
-    FileText, Building2, Bell
+    FileText, Building2, Bell, ShieldCheck, MapPin, UserCheck
 } from 'lucide-react';
 
 // Import our CRUD and Pipeline components
@@ -22,6 +22,8 @@ import DepartmentCrud from './components/DepartmentCrud';
 import MonthlyHiringReport from './components/MonthlyHiringReport';
 import LoginScreen from './components/LoginScreen';
 import ProfileMenu from './components/ProfileMenu';
+import UserManager from './components/UserManager';
+import BranchManager from './components/BranchManager';
 
 function App() {
     const [activeTab, setActiveTab] = useState('dashboard');
@@ -39,6 +41,7 @@ function App() {
     const [activeDuties, setActiveDuties] = useState([]);
     const [pendingFollowupsList, setPendingFollowupsList] = useState([]);
     const [prefillLead, setPrefillLead] = useState(null);
+    const [prefillQuotation, setPrefillQuotation] = useState(null);
     const [vehicles, setVehicles] = useState([]);
     const [notifOpen, setNotifOpen] = useState(false);
     const [user, setUser] = useState(null);
@@ -131,23 +134,32 @@ function App() {
         setLoadingStats(false);
     };
 
+    const isSuperAdmin = user?.role === 'super_admin';
+
     const sidebarItems = [
         { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+        ...(isSuperAdmin ? [
+            { id: 'users', label: 'Managers & Users', icon: ShieldCheck },
+            { id: 'branches', label: 'Company Branches', icon: Building2 },
+        ] : []),
         { id: 'leads', label: 'Leads & Follow-ups', icon: PhoneCall },
         { id: 'bookings', label: 'Booking Desk', icon: Compass },
         { id: 'quotations', label: 'Quotations', icon: FileText },
-        { id: 'departments', label: 'Departments', icon: Building2 },
-        { id: 'monthly-report', label: 'Monthly Dept. Hiring', icon: ClipboardList },
-        { id: 'booking-types', label: 'Booking Types (Rates)', icon: Tag },
-        { id: 'firms', label: 'Firms Directory', icon: Building },
         { id: 'clients', label: 'Clients & Corporates', icon: Users },
         { id: 'drivers', label: 'Drivers Database', icon: Users },
         { id: 'vehicles', label: 'Fleet (Vehicles)', icon: Car },
         { id: 'events', label: 'Events', icon: Calendar },
+        { id: 'departments', label: 'Departments', icon: Building2 },
+        { id: 'monthly-report', label: 'Monthly Dept. Hiring', icon: ClipboardList },
+        { id: 'booking-types', label: 'Booking Types (Rates)', icon: Tag },
+        { id: 'firms', label: 'Firms Directory', icon: Building },
     ];
 
-    // Lead handoff to Quotation / Booking Desk
-    const consumePrefill = () => setPrefillLead(null);
+    // Lead / Quotation handoff to Quotation / Booking Desk
+    const consumePrefill = () => {
+        setPrefillLead(null);
+        setPrefillQuotation(null);
+    };
 
     // ==========================================
     // EXPIRY NOTIFICATIONS (RC / Insurance / PUC)
@@ -181,11 +193,19 @@ function App() {
 
     const handleSendToQuotation = (lead) => {
         setPrefillLead(lead);
+        setPrefillQuotation(null);
         setActiveTab('quotations');
     };
 
     const handleSendToBooking = (lead) => {
         setPrefillLead(lead);
+        setPrefillQuotation(null);
+        setActiveTab('bookings');
+    };
+
+    const handleSendQuotationToBooking = (quotation) => {
+        setPrefillLead(null);
+        setPrefillQuotation(quotation);
         setActiveTab('bookings');
     };
 
@@ -193,12 +213,16 @@ function App() {
         switch (activeTab) {
             case 'dashboard':
                 return renderDashboardOverview();
+            case 'users':
+                return <UserManager currentUser={user} />;
+            case 'branches':
+                return <BranchManager currentUser={user} />;
             case 'bookings':
-                return <BookingsManager prefillLead={prefillLead} onConsumePrefill={consumePrefill} />;
+                return <BookingsManager currentUser={user} prefillLead={prefillLead} prefillQuotation={prefillQuotation} onConsumePrefill={consumePrefill} />;
             case 'leads':
-                return <LeadsManager onSendToQuotation={handleSendToQuotation} onSendToBooking={handleSendToBooking} />;
+                return <LeadsManager currentUser={user} onSendToQuotation={handleSendToQuotation} onSendToBooking={handleSendToBooking} />;
             case 'quotations':
-                return <QuotationCrud prefillLead={prefillLead} onConsumePrefill={consumePrefill} />;
+                return <QuotationCrud currentUser={user} prefillLead={prefillLead} onConsumePrefill={consumePrefill} onSendToBooking={handleSendQuotationToBooking} />;
             case 'departments':
                 return <DepartmentCrud />;
             case 'monthly-report':
@@ -208,13 +232,13 @@ function App() {
             case 'firms':
                 return <FirmCrud />;
             case 'clients':
-                return <ClientCrud />;
+                return <ClientCrud currentUser={user} />;
             case 'drivers':
-                return <DriverCrud />;
+                return <DriverCrud currentUser={user} />;
             case 'vehicles':
-                return <VehicleCrud />;
+                return <VehicleCrud currentUser={user} />;
             case 'events':
-                return <EventCrud />;
+                return <EventCrud currentUser={user} />;
             default:
                 return renderDashboardOverview();
         }
@@ -223,9 +247,45 @@ function App() {
     const renderDashboardOverview = () => {
         return (
             <div className="space-y-6">
-                <div>
-                    <h2 className="text-2xl font-bold text-slate-800">Welcome back, Admin</h2>
-                    <p className="text-slate-500 text-sm">Here is a summary of your tour operations and travel sales pipeline.</p>
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                    <div>
+                        <div className="flex items-center gap-2.5 flex-wrap">
+                            <h2 className="text-2xl font-black text-slate-800 tracking-tight">
+                                Welcome back, {user?.name || 'User'}
+                            </h2>
+                            {isSuperAdmin ? (
+                                <span className="inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider bg-purple-100 text-purple-700 border border-purple-200 px-2.5 py-1 rounded-xl">
+                                    <ShieldCheck size={14} /> Super Admin
+                                </span>
+                            ) : (
+                                <span className="inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider bg-indigo-100 text-indigo-700 border border-indigo-200 px-2.5 py-1 rounded-xl">
+                                    <Building2 size={14} /> Manager • {user?.branch?.name || 'Assigned Branch'}
+                                </span>
+                            )}
+                        </div>
+                        <p className="text-slate-500 text-xs font-medium mt-1">
+                            {isSuperAdmin
+                                ? 'Enterprise Control Board • Showing live operations aggregated across all company branches & managers.'
+                                : `Branch Workspace • Showing data and operations created by you for ${user?.branch?.name || 'your assigned branch'}.`}
+                        </p>
+                    </div>
+
+                    {isSuperAdmin && (
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={() => setActiveTab('users')}
+                                className="flex items-center gap-1.5 text-xs font-bold bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 px-3.5 py-2 rounded-xl transition-colors cursor-pointer"
+                            >
+                                <ShieldCheck size={14} /> Manage Managers
+                            </button>
+                            <button
+                                onClick={() => setActiveTab('branches')}
+                                className="flex items-center gap-1.5 text-xs font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-3.5 py-2 rounded-xl transition-colors cursor-pointer"
+                            >
+                                <Building2 size={14} /> Branches
+                            </button>
+                        </div>
+                    )}
                 </div>
 
                 {/* Stats Grid */}
@@ -506,9 +566,22 @@ function App() {
                             )}
                         </div>
 
-                        <div className="bg-indigo-50 border border-indigo-100 rounded-lg px-2.5 py-1 text-xs text-indigo-700 font-semibold flex items-center gap-1.5">
-                            <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-ping"></span>
-                            Live Server Desk
+                        {/* Role & Branch pill */}
+                        {isSuperAdmin ? (
+                            <div className="bg-purple-50 border border-purple-200/80 rounded-xl px-3 py-1.5 text-xs text-purple-700 font-bold flex items-center gap-1.5 shadow-xs">
+                                <ShieldCheck size={14} className="text-purple-600" />
+                                <span>Super Admin</span>
+                            </div>
+                        ) : (
+                            <div className="bg-indigo-50 border border-indigo-200/80 rounded-xl px-3 py-1.5 text-xs text-indigo-700 font-bold flex items-center gap-1.5 shadow-xs">
+                                <Building2 size={14} className="text-indigo-600" />
+                                <span className="max-w-[150px] truncate">{user?.branch?.name || 'Manager'}</span>
+                            </div>
+                        )}
+
+                        <div className="bg-slate-100 border border-slate-200 rounded-lg px-2.5 py-1 text-xs text-slate-600 font-semibold flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></span>
+                            Live Server
                         </div>
 
                         {/* Profile dropdown */}

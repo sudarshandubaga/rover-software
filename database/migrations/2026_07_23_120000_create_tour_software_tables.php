@@ -30,6 +30,7 @@ return new class extends Migration
         // 1. Drivers
         Schema::create('drivers', function (Blueprint $table) {
             $table->id();
+            $table->foreignId('firm_id')->nullable()->constrained('firms')->onDelete('set null');
             $table->string('name');
             $table->string('phone');
             $table->string('email')->nullable();
